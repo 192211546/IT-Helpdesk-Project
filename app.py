@@ -33,7 +33,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Initialize table on startup
+# Auto-create the table on startup
 init_db()
 
 @app.route("/")
@@ -95,11 +95,9 @@ def tickets():
     conn = get_db()
     rows = conn.execute(query, params).fetchall()
     
-    # Format rows to match template expectations
     ticket_list = []
     for r in rows:
         t = dict(r)
-        # Parse timestamp safely
         try:
             t["created_at"] = datetime.strptime(str(t["created_at"])[:19], "%Y-%m-%d %H:%M:%S")
         except Exception:
