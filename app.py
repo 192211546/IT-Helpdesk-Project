@@ -1,137 +1,132 @@
 import os
+import sqlite3
+from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, flash
-import mysql.connector
-from dotenv import load_dotenv
-
-load_dotenv()  # reads the .env file
 
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY", "dev-key")
+app.secret_key = os.getenv("SECRET_KEY", "helpdesk-secret-key-12345")
+DB_PATH = os.path.join(os.path.dirname(__file__), "helpdesk.db")
 
-CATEGORIES = ["Hardware", "Software", "Network"]
-PRIORITIES = ["Low", "Medium", "High"]
+CATEGORIES = ["Hardware", "Software", "Network", "Account"]
+PRIORITIES = ["Low", "Medium", "High", "Urgent"]
 STATUSES = ["Open", "In Progress", "Resolved"]
 
-
 def get_db():
-    """Open a new connection to MySQL using values from .env."""
-    return mysql.connector.connect(
-        host=os.getenv("DB_HOST", "localhost"),
-        user=os.getenv("DB_USER", "root"),
-        password=os.getenv("DB_PASSWORD", ""),
-        database=os.getenv("DB_NAME", "it_helpdesk"),
-    )
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-
-def query(sql, params=(), fetch=True):
-    """Run a parameterized query. Returns rows (as dicts) or None."""
+def init_db():
     conn = get_db()
-    try:
-        cur = conn.cursor(dictionary=True)
-        cur.execute(sql, params)
-        if fetch:
-            return cur.fetchall()
-        conn.commit()
-    finally:
-        conn.close()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tickets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            category TEXT NOT NULL,
+            priority TEXT NOT NULL,
+            status TEXT DEFAULT 'Open',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
 
+# Initialize table on startup
+init_db()
 
 @app.route("/")
 def dashboard():
-    try:
-        rows = query("SELECT status, COUNT(*) AS n FROM tickets GROUP BY status")
-    except mysql.connector.Error as e:
-        flash(f"Database error: {e}", "error")
-        rows = []
+    conn = get_db()
+    total = conn.execute("SELECT COUNT(*) AS c FROM tickets").fetchone()["c"]
     counts = {s: 0 for s in STATUSES}
-    for r in rows:
-        counts[r["status"]] = r["n"]
-    total = sum(counts.values())
+    for row in conn.execute("SELECT status, COUNT(*) AS c FROM tickets GROUP BY status").fetchall():
+        if row["status"] in counts:
+            counts[row["status"]] = row["c"]
+    conn.close()
     return render_template("dashboard.html", total=total, counts=counts)
-
 
 @app.route("/create", methods=["GET", "POST"])
 def create_ticket():
-    form = {}
     if request.method == "POST":
-        form = request.form
-        title = form.get("title", "").strip()
-        description = form.get("description", "").strip()
-        category = form.get("category", "")
-        priority = form.get("priority", "")
+        title = request.form.get("title", "").strip()
+        description = request.form.get("description", "").strip()
+        category = request.form.get("category")
+        priority = request.form.get("priority")
 
-        errors = []
-        if not title or len(title) > 150:
-            errors.append("Title is required (max 150 characters).")
-        if not description:
-            errors.append("Description is required.")
-        if category not in CATEGORIES:
-            errors.append("Please choose a valid category.")
-        if priority not in PRIORITIES:
-            errors.append("Please choose a valid priority.")
+        if not title or not description or category not in CATEGORIES or priority not in PRIORITIES:
+            flash("Please fill in all fields correctly.", "danger")
+            return render_template("create_ticket.html", categories=CATEGORIES, priorities=PRIORITIES, form=request.form)
 
-        if errors:
-            for e in errors:
-                flash(e, "error")
-        else:
-            try:
-                query(
-                    "INSERT INTO tickets (title, description, category, priority) "
-                    "VALUES (%s, %s, %s, %s)",
-                    (title, description, category, priority),
-                    fetch=False,
-                )
-                flash("Ticket created successfully!", "success")
-                return redirect(url_for("create_ticket"))
-            except mysql.connector.Error as e:
-                flash(f"Database error: {e}", "error")
-    return render_template("create_ticket.html", categories=CATEGORIES,
-                           priorities=PRIORITIES, form=form)
+        conn = get_db()
+        conn.execute(
+            "INSERT INTO tickets (title, description, category, priority, status) VALUES (?, ?, ?, ?, 'Open')",
+            (title, description, category, priority)
+        )
+        conn.commit()
+        conn.close()
+        flash("Ticket created successfully!", "success")
+        return redirect(url_for("tickets"))
 
+    return render_template("create_ticket.html", categories=CATEGORIES, priorities=PRIORITIES, form={})
 
 @app.route("/tickets")
 def tickets():
     search = request.args.get("search", "").strip()
-    priority = request.args.get("priority", "")
-    status = request.args.get("status", "")
+    sel_priority = request.args.get("priority", "")
+    sel_status = request.args.get("status", "")
 
-    sql = "SELECT * FROM tickets WHERE 1=1"
+    query = "SELECT * FROM tickets WHERE 1=1"
     params = []
+
     if search:
-        sql += " AND title LIKE %s"
+        query += " AND title LIKE ?"
         params.append(f"%{search}%")
-    if priority in PRIORITIES:
-        sql += " AND priority = %s"
-        params.append(priority)
-    if status in STATUSES:
-        sql += " AND status = %s"
-        params.append(status)
-    sql += " ORDER BY created_at DESC"
+    if sel_priority in PRIORITIES:
+        query += " AND priority = ?"
+        params.append(sel_priority)
+    if sel_status in STATUSES:
+        query += " AND status = ?"
+        params.append(sel_status)
 
-    try:
-        rows = query(sql, tuple(params))
-    except mysql.connector.Error as e:
-        flash(f"Database error: {e}", "error")
-        rows = []
-    return render_template("tickets.html", tickets=rows, priorities=PRIORITIES,
-                           statuses=STATUSES, search=search,
-                           sel_priority=priority, sel_status=status)
+    query += " ORDER BY id DESC"
 
-
-@app.route("/tickets/<int:ticket_id>/status", methods=["POST"])
-def update_status(ticket_id):
-    new_status = request.form.get("status", "")
-    if new_status not in STATUSES:
-        flash("Invalid status.", "error")
-    else:
+    conn = get_db()
+    rows = conn.execute(query, params).fetchall()
+    
+    # Format rows to match template expectations
+    ticket_list = []
+    for r in rows:
+        t = dict(r)
+        # Parse timestamp safely
         try:
-            query("UPDATE tickets SET status = %s WHERE id = %s",
-                  (new_status, ticket_id), fetch=False)
-            flash(f"Ticket #{ticket_id} updated to {new_status}.", "success")
-        except mysql.connector.Error as e:
-            flash(f"Database error: {e}", "error")
-    return redirect(request.referrer or url_for("tickets"))
+            t["created_at"] = datetime.strptime(str(t["created_at"])[:19], "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            t["created_at"] = datetime.now()
+        ticket_list.append(t)
+    conn.close()
 
+    return render_template(
+        "tickets.html",
+        tickets=ticket_list,
+        priorities=PRIORITIES,
+        statuses=STATUSES,
+        search=search,
+        sel_priority=sel_priority,
+        sel_status=sel_status
+    )
+
+@app.route("/ticket/<int:ticket_id>/status", methods=["POST"])
+def update_status(ticket_id):
+    new_status = request.form.get("status")
+    if new_status in STATUSES:
+        conn = get_db()
+        conn.execute("UPDATE tickets SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (new_status, ticket_id))
+        conn.commit()
+        conn.close()
+        flash("Status updated.", "success")
+    return redirect(url_for("tickets"))
 
 if __name__ == "__main__":
     app.run(debug=True)
