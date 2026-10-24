@@ -1,6 +1,5 @@
 import os
 import sqlite3
-from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, flash
 
 app = Flask(__name__)
@@ -33,7 +32,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Auto-create the table on startup
 init_db()
 
 @app.route("/")
@@ -92,12 +90,10 @@ def tickets():
 
     query += " ORDER BY id DESC"
 
-        conn = get_db()
+    conn = get_db()
     rows = conn.execute(query, params).fetchall()
     ticket_list = [dict(r) for r in rows]
     conn.close()
-
-
 
     return render_template(
         "tickets.html",
