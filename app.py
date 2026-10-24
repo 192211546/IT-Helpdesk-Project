@@ -92,11 +92,11 @@ def tickets():
 
     query += " ORDER BY id DESC"
 
-    conn = get_db()
+        conn = get_db()
     rows = conn.execute(query, params).fetchall()
-    
-        ticket_list = [dict(r) for r in rows]
+    ticket_list = [dict(r) for r in rows]
     conn.close()
+
 
 
     return render_template(
