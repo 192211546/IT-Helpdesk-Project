@@ -95,15 +95,9 @@ def tickets():
     conn = get_db()
     rows = conn.execute(query, params).fetchall()
     
-    ticket_list = []
-    for r in rows:
-        t = dict(r)
-        try:
-            t["created_at"] = datetime.strptime(str(t["created_at"])[:19], "%Y-%m-%d %H:%M:%S")
-        except Exception:
-            t["created_at"] = datetime.now()
-        ticket_list.append(t)
+        ticket_list = [dict(r) for r in rows]
     conn.close()
+
 
     return render_template(
         "tickets.html",
