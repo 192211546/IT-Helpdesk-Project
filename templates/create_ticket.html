@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Create Ticket{% endblock %}
+{% block content %}
+<h2>Create Ticket</h2>
+<form method="POST" class="panel">
+  <label>Title</label>
+  <input type="text" name="title" value="{{ form.get('title','') }}" required>
+
+  <label>Description</label>
+  <textarea name="description" rows="5" required>{{ form.get('description','') }}</textarea>
+
+  <label>Category</label>
+  <select name="category">
+    {% for c in categories %}
+    <option value="{{ c }}" {% if form.get('category')==c %}selected{% endif %}>{{ c }}</option>
+    {% endfor %}
+  </select>
+
+  <label>Priority</label>
+  <select name="priority">
+    {% for p in priorities %}
+    <option value="{{ p }}" {% if form.get('priority')==p %}selected{% endif %}>{{ p }}</option>
+    {% endfor %}
+  </select>
+
+  <button type="submit" class="btn">Submit Ticket</button>
+</form>
+{% endblock %}
